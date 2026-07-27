@@ -26,6 +26,7 @@ MESSAGE_COLUMN_CANDIDATES = {
 
 OPTIONAL_MESSAGE_COLUMN_CANDIDATES = {
     "date_sent": ("date_sent",),
+    "subject_prefix": ("subject_prefix",),
     "read_flag": ("read",),
     "flagged_flag": ("flagged",),
     "deleted_flag": ("deleted",),
@@ -286,6 +287,10 @@ def build_message_query(schema: EnvelopeSchema, message_filter: MessageFilter) -
     selected.append(
         f"addresses_table.{display_name_column} AS sender_name" if display_name_column else "NULL AS sender_name"
     )
+    subject_prefix_column = columns.get("subject_prefix")
+    selected.append(
+        f'messages."{subject_prefix_column}" AS subject_prefix' if subject_prefix_column else "NULL AS subject_prefix"
+    )
     for logical_name, alias in (
         ("date_sent", "date_sent"),
         ("read_flag", "is_read"),
@@ -325,7 +330,14 @@ def build_message_query(schema: EnvelopeSchema, message_filter: MessageFilter) -
             parameters.append(f"%{message_filter.sender}%")
 
     if message_filter.subject:
-        conditions.append("subjects_table.{} LIKE ?".format(schema.subject_columns["subject_text"]))
+        subject_text_column = schema.subject_columns["subject_text"]
+        if subject_prefix_column:
+            conditions.append(
+                f'(COALESCE(messages."{subject_prefix_column}", "") || '
+                f'COALESCE(subjects_table.{subject_text_column}, "")) LIKE ?'
+            )
+        else:
+            conditions.append(f"subjects_table.{subject_text_column} LIKE ?")
         parameters.append(f"%{message_filter.subject}%")
 
     if message_filter.mailbox:
@@ -380,10 +392,16 @@ def build_message_query(schema: EnvelopeSchema, message_filter: MessageFilter) -
     return "\n".join(statement), parameters
 
 
+def combine_subject(row: sqlite3.Row) -> str:
+    prefix = row["subject_prefix"] or ""
+    subject = row["subject"] or ""
+    return f"{prefix}{subject}"
+
+
 def row_to_record(row: sqlite3.Row, offset_seconds: int) -> MessageRecord:
     return MessageRecord(
         message_id=int(row["message_id"]),
-        subject=row["subject"] or "",
+        subject=combine_subject(row),
         sender_address=row["sender_address"] or "",
         sender_name=row["sender_name"] or "",
         mailbox_url=row["mailbox_url"] or "",

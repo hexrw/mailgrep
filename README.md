@@ -42,6 +42,12 @@ program. This trick worked until Apple closed it in early 2019.
 
 `mailgrep doctor` detects a missing grant and names the exact application that needs it.
 
+One wrinkle worth knowing: `~/Library/Mail` is a protected directory, so a denial can surface as
+*"no such file"* rather than a permission error. `mailgrep` reports that case as ambiguous — Mail was
+never set up, **or** access is denied and macOS is hiding it — instead of asserting the store is
+missing. Genuinely transient errors are reported as undetermined so you are never sent to change
+privacy settings for an unrelated failure.
+
 Full Disk Access is coarse: it grants the terminal read access to all TCC-protected data, not just
 Mail. That is a real cost, and macOS offers no narrower per-application entitlement for mail data.
 The only tighter alternative is installing a reader as a signed launchd agent with
@@ -91,7 +97,7 @@ Every command takes `--json` for scripting, and `--mail-root` to point at a copi
 |------|---------|
 | 0 | success |
 | 1 | usage or lookup error (e.g. unknown message id) |
-| 2 | Full Disk Access missing, or no Mail store |
+| 2 | Full Disk Access missing, or no Mail store, or access undetermined |
 | 3 | envelope index schema not recognised |
 | 4 | coverage incomplete (`doctor` only) |
 | 5 | an attachment could not be extracted |
@@ -143,13 +149,61 @@ they are plain Unix seconds. `mailgrep` samples the newest value and picks the i
 both work; hardcoding the Cocoa offset puts every date off by 31 years. `doctor` prints the detected
 offset.
 
+**Subjects are stored without their reply prefix.** `subjects.subject` holds `Faktura 260002` while
+`Re: ` lives in a separate `messages.subject_prefix` column. `mailgrep` concatenates them, so
+`--subject "Re: Faktura"` matches. Joining only the `subjects` table — which every documented query
+does — silently misses every reply when you search across the prefix boundary.
+
+**`messages.sender` joins to `addresses.ROWID` directly.** The schema also contains `senders` and
+`sender_addresses` tables, and at least one implementation declares `sender REFERENCES
+sender_addresses` in its DDL. On macOS 26 that indirection is not used for the sender address: the
+direct join resolves every row. `senders` holds Apple-Intelligence contact bucketing instead.
+
+**Message ids are `ROWID`s and are not stable.** Apple Mail can rebuild the envelope index and
+reassign them. Use ids within a session; do not persist them. The RFC `Message-ID` header is the only
+durable identifier.
+
+The real schema on macOS 26 has ~55 tables, far more than any published description — including
+`ews_folders`, `conversations`, `labels`, and several Apple-Intelligence categorization tables.
+`mailgrep` reads only `messages`, `subjects`, `addresses`, `mailboxes` and `recipients`, and probes
+for optional columns rather than requiring them.
+
+**Message flags come from the `.emlx` plist trailer**, which is how `--unread` and `--flagged` work
+for messages missing from the index. The bit layout is not contiguous: bit 0 read, 1 deleted,
+2 answered, 3 encrypted, 4 flagged, 5 recent, 6 draft, 7 initial, 8 forwarded, 9 redirected, then
+bits 10–15 attachment count, 16–22 priority, 23 signed, 24 junk, 25 not junk. Published orderings
+that run the flags contiguously from bit 0 are wrong past bit 0.
+
 Mail keeps the index in WAL mode, so `mailgrep` snapshot-copies the database together with its `-wal`
 and `-shm` sidecars and opens the copy read-only. Reading the main database alone — or with
 `immutable=1` — silently misses everything still sitting in the write-ahead log.
 
-The local store is only as fresh as Mail's last sync, and Mail does not sync while it is closed.
-`doctor` reports how long ago the index was touched and warns past 24 hours. Forcing a sync would
-require an Automation grant, which `mailgrep` does not ask for.
+## Freshness cannot be measured, only bounded
+
+Apple Mail does not fetch mail while it is closed — it holds an IMAP IDLE connection, which requires
+the app to be running. There is no launchd agent doing it on Mail's behalf. So if Mail is shut, the
+local store is stale by an unbounded amount.
+
+**macOS exposes no last-sync timestamp.** There is no such column in the envelope index and no such
+key in any plist under `MailData`. The `sync_state` column that does exist belongs to `ews_folders`,
+is Exchange-only, and holds an opaque sync token rather than a time.
+
+So `doctor` reports two facts instead of one guess: whether Mail.app is currently running, and how
+long ago Mail last wrote to its store. Treat the second as a **lower bound**, not a guarantee — Mail
+writes for local reasons (marking read, flagging, categorization), so a recent write does not prove a
+server round-trip, and a quiet mailbox that synced seconds ago looks identical to one that has not
+synced in a week.
+
+Forcing a sync is possible via an AppleScript `synchronize` call, but that is an Apple Event and needs
+a second TCC grant (Automation) on top of Full Disk Access — and that same grant permits sending and
+deleting. `mailgrep` does not ask for it, which is why it stays single-grant and read-only.
+
+## Exchange accounts are a hard limitation
+
+EWS/Exchange accounts in Apple Mail do not materialise `.emlx` files; messages stay server-resident
+and are fetched on demand. For those accounts a local reader returns **nothing**, not stale data.
+`doctor` will show the mailboxes with low or zero message counts. IMAP, Gmail/Workspace, iCloud and
+On My Mac accounts all store locally and work normally.
 
 ## Development
 

@@ -215,7 +215,7 @@ def run_search(arguments: argparse.Namespace) -> int:
     if unindexed_result is not None and unindexed_result.skipped_for_unknowable_state:
         footer.append(
             f"-- WARNING: {unindexed_result.skipped_for_unknowable_state} unindexed messages were skipped because "
-            "--unread and --flagged cannot be evaluated without Apple Mail's index"
+            "--unread/--flagged cannot be evaluated: their .emlx files carry no flags trailer"
         )
     if arguments.indexed_only:
         footer.append("-- NOTE: --indexed-only was set; messages absent from Apple Mail's index were not searched")

@@ -17,6 +17,7 @@ ENVELOPE_SCHEMA_STATEMENTS = (
         remote_id INTEGER,
         sender INTEGER,
         subject INTEGER,
+        subject_prefix TEXT,
         date_sent INTEGER,
         date_received INTEGER,
         mailbox INTEGER,
@@ -61,12 +62,15 @@ def build_emlx_bytes(message_text: str, metadata_plist: str | None = None) -> by
     return f"{len(message_bytes)}\n".encode("ascii") + message_bytes + trailer
 
 
-DEFAULT_METADATA_PLIST = """<?xml version="1.0" encoding="UTF-8"?>
+DEFAULT_METADATA_PLIST_TEMPLATE = """<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
-<dict><key>flags</key><integer>8623489</integer></dict>
+<dict><key>flags</key><integer>{flags}</integer></dict>
 </plist>
 """
+
+READ_MESSAGE_FLAGS = 8623489
+DEFAULT_METADATA_PLIST = DEFAULT_METADATA_PLIST_TEMPLATE.format(flags=READ_MESSAGE_FLAGS)
 
 PLAIN_MESSAGE = """From: Alec Katchur-Marsh <alec@example.com>
 To: Petr <petr@example.com>
@@ -167,6 +171,7 @@ class SyntheticMessage:
     filename: str
     raw_message: str
     external_attachments: dict[str, tuple[str, bytes]] = field(default_factory=dict)
+    subject_prefix: str = ""
 
 
 SYNTHETIC_MESSAGES = [
@@ -187,6 +192,7 @@ SYNTHETIC_MESSAGES = [
         received=datetime(2026, 6, 16, 7, 0),
         filename="1002.emlx",
         raw_message=HTML_MESSAGE,
+        subject_prefix="Re: ",
     ),
     SyntheticMessage(
         message_id=1003,
@@ -284,13 +290,14 @@ def write_envelope_index(version_directory: Path, use_unix_timestamps: bool = Fa
                 else to_cocoa_seconds(synthetic.received)
             )
             connection.execute(
-                "INSERT INTO messages (ROWID, sender, subject, date_sent, date_received, mailbox, "
+                "INSERT INTO messages (ROWID, sender, subject, subject_prefix, date_sent, date_received, mailbox, "
                 "read, flagged, deleted, size, conversation_id) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     synthetic.message_id,
                     address_rowids[synthetic.sender_address],
                     subject_rowids[synthetic.subject],
+                    synthetic.subject_prefix,
                     timestamp,
                     timestamp,
                     1,

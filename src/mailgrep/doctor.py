@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -23,6 +24,19 @@ from .store import (
 
 STALENESS_WARNING_THRESHOLD = timedelta(hours=24)
 SAMPLE_DIVERGENT_IDENTIFIER_COUNT = 10
+
+
+def mail_application_is_running() -> bool | None:
+    try:
+        result = subprocess.run(
+            ["pgrep", "-x", "Mail"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError:
+        return None
+    return result.returncode == 0
 
 
 def newest_modification_time(paths: list[Path]) -> datetime | None:
@@ -58,11 +72,17 @@ def build_report(mail_root: Path | None = None, force_rescan: bool = False) -> d
     on_disk_ids = locator.message_ids()
     report["messages_on_disk"] = len(on_disk_ids)
 
-    envelope_modified = newest_modification_time([mail_store.envelope_index_path])
-    report["envelope_index_modified"] = envelope_modified.isoformat() if envelope_modified else None
+    report["mail_application_running"] = mail_application_is_running()
+    envelope_modified = newest_modification_time(
+        [
+            mail_store.envelope_index_path,
+            mail_store.mail_data_directory / f"{mail_store.envelope_index_path.name}-wal",
+        ]
+    )
+    report["last_local_write"] = envelope_modified.isoformat() if envelope_modified else None
     if envelope_modified is not None:
         age = datetime.now(tz=timezone.utc) - envelope_modified
-        report["envelope_index_age_hours"] = round(age.total_seconds() / 3600, 2)
+        report["last_local_write_age_hours"] = round(age.total_seconds() / 3600, 2)
         report["staleness_warning"] = age > STALENESS_WARNING_THRESHOLD
 
     try:
@@ -142,16 +162,21 @@ def render_report(report: dict) -> str:
         lines.append("  messages missing from the index cannot be found by metadata search.")
         lines.append("  let Mail finish indexing, then re-run with --reindex.")
 
-    age_hours = report.get("envelope_index_age_hours")
+    lines.append("")
+    running = report.get("mail_application_running")
+    running_label = {True: "yes", False: "NO", None: "unknown"}[running]
+    lines.append(f"Mail.app running:       {running_label}")
+    age_hours = report.get("last_local_write_age_hours")
     if age_hours is not None:
-        freshness = f"envelope index touched {age_hours}h ago"
-        if report.get("staleness_warning"):
-            lines.append("")
-            lines.append(f"STALE: {freshness}.")
-            lines.append("  The local store only updates while Mail.app is running. Open Mail and let it sync,")
-            lines.append("  otherwise recent messages are absent from both the index and disk.")
-        else:
-            lines.append(f"freshness:              {freshness}")
+        lines.append(f"last local write:       {age_hours}h ago")
+    if running is False:
+        lines.append("  Apple Mail does not fetch mail while it is closed, so anything that arrived since it")
+        lines.append("  last ran is absent from this store. Open Mail and let it sync.")
+    if report.get("staleness_warning"):
+        lines.append("  No local write in over 24h, which suggests Mail has not synced recently.")
+    lines.append("  Note: last local write is a LOWER BOUND on freshness, not a guarantee. Mail writes for")
+    lines.append("  local reasons too (marking read, flagging), and a quiet mailbox that synced seconds ago")
+    lines.append("  looks identical to one that has not synced in a week. macOS exposes no last-sync time.")
 
     accounts = report.get("accounts", [])
     if accounts:

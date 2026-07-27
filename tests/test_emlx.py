@@ -7,9 +7,10 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from fixtures import HTML_MESSAGE, PLAIN_MESSAGE, build_emlx_bytes
+from fixtures import DEFAULT_METADATA_PLIST, HTML_MESSAGE, PLAIN_MESSAGE, build_emlx_bytes
 from mailgrep.emlx import (
     EmlxParseError,
+    MessageFlags,
     html_to_text,
     message_id_from_filename,
     parse_emlx_bytes,
@@ -61,6 +62,79 @@ class SplitEmlxTests(unittest.TestCase):
         raw = build_emlx_bytes(body)
         extracted, _ = split_emlx(raw)
         self.assertEqual(extracted.decode("utf-8"), body)
+
+
+class LengthPrefixWhitespaceTests(unittest.TestCase):
+    def test_accepts_space_terminated_prefix(self):
+        message_bytes = PLAIN_MESSAGE.encode("utf-8")
+        raw = f"{len(message_bytes)} ".encode("ascii") + message_bytes
+        extracted, _ = split_emlx(raw)
+        self.assertEqual(extracted, message_bytes)
+
+    def test_accepts_crlf_terminated_prefix(self):
+        message_bytes = PLAIN_MESSAGE.encode("utf-8")
+        raw = f"{len(message_bytes)}\r\n".encode("ascii") + message_bytes
+        extracted, _ = split_emlx(raw)
+        self.assertEqual(extracted, message_bytes)
+
+    def test_consumes_all_whitespace_after_the_length(self):
+        message_bytes = PLAIN_MESSAGE.encode("utf-8")
+        raw = f"  {len(message_bytes)} \t \n".encode("ascii") + message_bytes
+        extracted, _ = split_emlx(raw)
+        self.assertEqual(extracted, message_bytes)
+
+
+class TruncatedBoundaryTests(unittest.TestCase):
+    def test_repairs_single_dash_terminated_final_boundary(self):
+        payload = b"Content-Type: multipart/mixed; boundary=B\n\n--B\n\nbody\n--B-"
+        raw = f"{len(payload)}\n".encode("ascii") + payload + DEFAULT_METADATA_PLIST.encode("utf-8")
+        extracted, metadata = split_emlx(raw)
+        self.assertTrue(extracted.endswith(b"--B--"))
+        self.assertEqual(metadata.get("flags"), 8623489)
+
+    def test_leaves_correctly_terminated_boundary_alone(self):
+        payload = b"Content-Type: multipart/mixed; boundary=B\n\n--B\n\nbody\n--B--"
+        raw = f"{len(payload)}\n".encode("ascii") + payload + DEFAULT_METADATA_PLIST.encode("utf-8")
+        extracted, _ = split_emlx(raw)
+        self.assertEqual(extracted, payload)
+
+    def test_does_not_repair_when_no_plist_follows(self):
+        payload = b"some text ending in a dash -"
+        raw = f"{len(payload)}\n".encode("ascii") + payload
+        extracted, _ = split_emlx(raw)
+        self.assertEqual(extracted, payload)
+
+
+class MessageFlagsTests(unittest.TestCase):
+    def test_decodes_read_and_flagged_bits(self):
+        parsed = parse_emlx_bytes(build_emlx_bytes(PLAIN_MESSAGE), Path("1.emlx"))
+        flags = parsed.flags
+        self.assertIsNotNone(flags)
+        self.assertTrue(flags.has("read"))
+        self.assertFalse(flags.has("flagged"))
+        self.assertFalse(flags.has("deleted"))
+
+    def test_decodes_flagged_when_bit_four_set(self):
+        flags = MessageFlags(raw_value=1 << 4)
+        self.assertTrue(flags.has("flagged"))
+        self.assertFalse(flags.has("read"))
+
+    def test_attachment_count_and_priority_occupy_their_own_bit_ranges(self):
+        flags = MessageFlags(raw_value=(3 << 10) | (5 << 16))
+        self.assertEqual(flags.attachment_count, 3)
+        self.assertEqual(flags.priority, 5)
+        self.assertFalse(flags.has("read"))
+
+    def test_junk_and_signed_bits_are_above_the_gap(self):
+        self.assertTrue(MessageFlags(raw_value=1 << 23).has("signed"))
+        self.assertTrue(MessageFlags(raw_value=1 << 24).has("junk"))
+        self.assertTrue(MessageFlags(raw_value=1 << 25).has("not_junk"))
+
+    def test_absent_trailer_yields_no_flags(self):
+        message_bytes = PLAIN_MESSAGE.encode("utf-8")
+        raw = f"{len(message_bytes)}\n".encode("ascii") + message_bytes
+        parsed = parse_emlx_bytes(raw, Path("1.emlx"))
+        self.assertIsNone(parsed.flags)
 
 
 class ParsedMessageTests(unittest.TestCase):

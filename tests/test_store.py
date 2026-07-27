@@ -88,11 +88,12 @@ class AccessStateTests(unittest.TestCase):
             self.assertIs(state, AccessState.READABLE)
             self.assertIn("V10", detail)
 
-    def test_missing_root_is_distinguished_from_denied_access(self):
+    def test_absent_root_is_reported_as_ambiguous_not_as_certainly_missing(self):
         with tempfile.TemporaryDirectory() as base:
             state, detail = describe_access(Path(base) / "absent")
-            self.assertIs(state, AccessState.MAIL_ROOT_MISSING)
-            self.assertIn("never stored data", detail)
+            self.assertIs(state, AccessState.MAIL_ROOT_MISSING_OR_DENIED)
+            self.assertIn("two possible causes", detail)
+            self.assertIn("Full Disk Access is denied", detail)
 
     def test_empty_root_reports_no_version_directory(self):
         with tempfile.TemporaryDirectory() as base:

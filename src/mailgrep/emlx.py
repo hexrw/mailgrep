@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import plistlib
+import re
 from dataclasses import dataclass, field
 from email import message_from_bytes
 from email.header import decode_header, make_header
@@ -55,6 +56,44 @@ def html_to_text(html: str) -> str:
     return extractor.text()
 
 
+FLAG_BIT_POSITIONS = {
+    "read": 0,
+    "deleted": 1,
+    "answered": 2,
+    "encrypted": 3,
+    "flagged": 4,
+    "recent": 5,
+    "draft": 6,
+    "initial": 7,
+    "forwarded": 8,
+    "redirected": 9,
+    "signed": 23,
+    "junk": 24,
+    "not_junk": 25,
+}
+ATTACHMENT_COUNT_BIT_OFFSET = 10
+ATTACHMENT_COUNT_BIT_WIDTH = 6
+PRIORITY_BIT_OFFSET = 16
+PRIORITY_BIT_WIDTH = 7
+
+
+@dataclass(frozen=True)
+class MessageFlags:
+    raw_value: int
+
+    def has(self, name: str) -> bool:
+        position = FLAG_BIT_POSITIONS[name]
+        return bool(self.raw_value >> position & 1)
+
+    @property
+    def attachment_count(self) -> int:
+        return self.raw_value >> ATTACHMENT_COUNT_BIT_OFFSET & (2**ATTACHMENT_COUNT_BIT_WIDTH - 1)
+
+    @property
+    def priority(self) -> int:
+        return self.raw_value >> PRIORITY_BIT_OFFSET & (2**PRIORITY_BIT_WIDTH - 1)
+
+
 @dataclass
 class ParsedMessage:
     path: Path
@@ -64,6 +103,13 @@ class ParsedMessage:
     @property
     def is_partial(self) -> bool:
         return self.path.name.endswith(PARTIAL_EMLX_SUFFIX)
+
+    @property
+    def flags(self) -> MessageFlags | None:
+        raw_value = self.metadata.get("flags")
+        if not isinstance(raw_value, int):
+            return None
+        return MessageFlags(raw_value=raw_value)
 
     @property
     def message_id(self) -> int | None:
@@ -133,22 +179,34 @@ def message_id_from_filename(path: Path) -> int | None:
     return int(stem) if stem.isdigit() else None
 
 
+LENGTH_PREFIX_PATTERN = re.compile(rb"^\s*(\d+)\s+")
+PLIST_TRAILER_MARKER = b"<?xml"
+TRUNCATED_BOUNDARY_PEEK_LENGTH = 5
+
+
+def repair_truncated_boundary(message_bytes: bytes, trailer: bytes) -> bytes:
+    if not message_bytes.endswith(b"-") or message_bytes.endswith(b"--"):
+        return message_bytes
+    if trailer[:TRUNCATED_BOUNDARY_PEEK_LENGTH].lstrip()[: len(PLIST_TRAILER_MARKER)] != PLIST_TRAILER_MARKER:
+        return message_bytes
+    return message_bytes + b"-"
+
+
 def split_emlx(raw: bytes) -> tuple[bytes, dict]:
-    newline_position = raw.find(b"\n")
-    if newline_position < 0:
-        raise EmlxParseError("missing length prefix line")
-    length_token = raw[:newline_position].strip()
-    if not length_token.isdigit():
-        raise EmlxParseError(f"length prefix is not numeric: {length_token!r}")
-    declared_length = int(length_token)
-    message_start = newline_position + 1
+    match = LENGTH_PREFIX_PATTERN.match(raw)
+    if match is None:
+        raise EmlxParseError("content did not start with a decimal payload length")
+    declared_length = int(match.group(1))
+    message_start = match.end()
     message_end = message_start + declared_length
     message_bytes = raw[message_start:message_end]
-    trailer = raw[message_end:].strip()
+    trailer = raw[message_end:]
+    message_bytes = repair_truncated_boundary(message_bytes, trailer)
     metadata: dict = {}
-    if trailer:
+    stripped_trailer = trailer.strip()
+    if stripped_trailer:
         try:
-            loaded = plistlib.loads(trailer)
+            loaded = plistlib.loads(stripped_trailer)
             if isinstance(loaded, dict):
                 metadata = loaded
         except Exception:

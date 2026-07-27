@@ -128,6 +128,18 @@ class QueryTests(EnvelopeFixtureCase):
         records = self.records_for(MessageFilter(subject="contract"))
         self.assertEqual([record.message_id for record in records], [1004])
 
+    def test_subject_includes_the_reply_prefix(self):
+        records = self.records_for(MessageFilter(subject="Weekly digest"))
+        self.assertEqual(records[0].subject, "Re: Weekly digest")
+
+    def test_matches_subject_search_that_spans_the_prefix(self):
+        records = self.records_for(MessageFilter(subject="Re: Weekly"))
+        self.assertEqual([record.message_id for record in records], [1002])
+
+    def test_still_matches_subject_without_the_prefix(self):
+        records = self.records_for(MessageFilter(subject="digest"))
+        self.assertEqual([record.message_id for record in records], [1002])
+
     def test_filters_by_recipient(self):
         records = self.records_for(MessageFilter(recipient="petr@example.com"))
         self.assertEqual(len(records), 5)

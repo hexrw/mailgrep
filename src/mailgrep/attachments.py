@@ -61,6 +61,10 @@ def is_contained_within(candidate: Path, container: Path) -> bool:
     return True
 
 
+def is_ignorable_directory_entry(entry: Path) -> bool:
+    return entry.name.startswith(".")
+
+
 def find_external_file(attachments_root: Path, part_id: str, filename: str) -> Path | None:
     if not attachments_root.is_dir():
         return None
@@ -70,7 +74,7 @@ def find_external_file(attachments_root: Path, part_id: str, filename: str) -> P
         if is_contained_within(candidate, attachments_root) and candidate.is_file():
             return candidate
         for entry in sorted(exact_directory.iterdir()):
-            if entry.is_file():
+            if entry.is_file() and not is_ignorable_directory_entry(entry):
                 return entry
     for part_directory in sorted(attachments_root.iterdir()):
         if not part_directory.is_dir():

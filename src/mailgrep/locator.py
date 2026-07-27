@@ -69,7 +69,20 @@ def cache_path_for(mail_store: MailStore, cache_directory: Path | None = None) -
     return directory / f"message-paths-v{mail_store.version}.json"
 
 
-def read_cached_paths(cache_file: Path, version_directory: Path) -> dict[int, str] | None:
+def envelope_index_fingerprint(mail_store: MailStore) -> str:
+    fingerprint_parts: list[str] = []
+    for suffix in ("", "-wal"):
+        path = mail_store.mail_data_directory / f"{mail_store.envelope_index_path.name}{suffix}"
+        try:
+            status = path.stat()
+        except OSError:
+            fingerprint_parts.append(f"{suffix}:absent")
+            continue
+        fingerprint_parts.append(f"{suffix}:{status.st_mtime_ns}:{status.st_size}")
+    return "|".join(fingerprint_parts)
+
+
+def read_cached_paths(cache_file: Path, version_directory: Path, fingerprint: str) -> dict[int, str] | None:
     try:
         payload = json.loads(cache_file.read_text())
     except (OSError, ValueError):
@@ -78,17 +91,25 @@ def read_cached_paths(cache_file: Path, version_directory: Path) -> dict[int, st
         return None
     if payload.get("version_directory") != str(version_directory):
         return None
+    if payload.get("envelope_index_fingerprint") != fingerprint:
+        return None
     entries = payload.get("relative_paths")
     if not isinstance(entries, dict):
         return None
     return {int(key): value for key, value in entries.items()}
 
 
-def write_cached_paths(cache_file: Path, version_directory: Path, relative_paths: dict[int, str]) -> None:
+def write_cached_paths(
+    cache_file: Path,
+    version_directory: Path,
+    fingerprint: str,
+    relative_paths: dict[int, str],
+) -> None:
     cache_file.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "format_version": CACHE_FORMAT_VERSION,
         "version_directory": str(version_directory),
+        "envelope_index_fingerprint": fingerprint,
         "relative_paths": {str(key): value for key, value in relative_paths.items()},
     }
     temporary_file = cache_file.with_suffix(".json.tmp")
@@ -102,12 +123,13 @@ def build_locator(
     force_rescan: bool = False,
 ) -> MessageLocator:
     cache_file = cache_path_for(mail_store, cache_directory)
+    fingerprint = envelope_index_fingerprint(mail_store)
     if not force_rescan:
-        cached = read_cached_paths(cache_file, mail_store.version_directory)
+        cached = read_cached_paths(cache_file, mail_store.version_directory, fingerprint)
         if cached is not None:
             return MessageLocator(mail_store=mail_store, relative_paths=cached)
     discovered = scan_message_paths(mail_store)
-    write_cached_paths(cache_file, mail_store.version_directory, discovered)
+    write_cached_paths(cache_file, mail_store.version_directory, fingerprint, discovered)
     return MessageLocator(mail_store=mail_store, relative_paths=discovered)
 
 

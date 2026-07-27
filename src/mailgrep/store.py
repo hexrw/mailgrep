@@ -16,8 +16,9 @@ MAXIMUM_PROCESS_ANCESTRY_DEPTH = 16
 class AccessState(str, Enum):
     READABLE = "readable"
     FULL_DISK_ACCESS_REQUIRED = "full_disk_access_required"
-    MAIL_ROOT_MISSING = "mail_root_missing"
+    MAIL_ROOT_MISSING_OR_DENIED = "mail_root_missing_or_denied"
     NO_VERSION_DIRECTORY = "no_version_directory"
+    UNDETERMINED = "undetermined"
 
 
 class MailStoreError(RuntimeError):
@@ -102,13 +103,45 @@ def format_full_disk_access_message(blocked_path: Path, responsible_application:
     return "\n".join(lines)
 
 
+class AmbiguousAccessError(MailStoreError):
+    def __init__(self, blocked_path: Path):
+        self.blocked_path = blocked_path
+        super().__init__(format_ambiguous_access_message(blocked_path))
+
+
+class UndeterminedAccessError(MailStoreError):
+    pass
+
+
+def format_ambiguous_access_message(blocked_path: Path) -> str:
+    return "\n".join(
+        [
+            f"{blocked_path} reports that it does not exist.",
+            "",
+            "This has two possible causes and macOS does not let us tell them apart:",
+            "  1. Apple Mail has never stored data for this user account.",
+            "  2. Full Disk Access is denied, and macOS is hiding the directory rather than",
+            "     reporting a permission error.",
+            "",
+            "If Apple Mail is set up and has messages, treat this as cause 2 and grant Full Disk",
+            f"Access to {detect_responsible_application() or 'your terminal application'},",
+            "then quit and reopen it completely.",
+        ]
+    )
+
+
 def scan_directory(directory: Path) -> list[os.DirEntry]:
     try:
         return list(os.scandir(directory))
     except PermissionError:
         raise FullDiskAccessError(directory) from None
     except FileNotFoundError:
-        raise MailStoreError(f"{directory} does not exist") from None
+        raise AmbiguousAccessError(directory) from None
+    except OSError as error:
+        raise UndeterminedAccessError(
+            f"could not read {directory}: {error.strerror or error}. This is not a permission problem; "
+            "retry, and do not change privacy settings on account of it."
+        ) from None
 
 
 def is_version_directory_name(name: str) -> bool:
@@ -136,11 +169,12 @@ def describe_access(mail_root: Path | None = None) -> tuple[AccessState, str]:
         versions = discover_version_directories(root)
     except FullDiskAccessError as error:
         return AccessState.FULL_DISK_ACCESS_REQUIRED, str(error)
-    except MailStoreError:
-        return (
-            AccessState.MAIL_ROOT_MISSING,
-            f"{root} does not exist. Apple Mail has never stored data for this user account.",
-        )
+    except AmbiguousAccessError as error:
+        return AccessState.MAIL_ROOT_MISSING_OR_DENIED, str(error)
+    except UndeterminedAccessError as error:
+        return AccessState.UNDETERMINED, str(error)
+    except MailStoreError as error:
+        return AccessState.UNDETERMINED, str(error)
     if not versions:
         return (
             AccessState.NO_VERSION_DIRECTORY,

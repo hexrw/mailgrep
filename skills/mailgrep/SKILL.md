@@ -53,8 +53,8 @@ than presenting results as complete when they aren't:
   drafts and outbox. Those rows are labelled `(unindexed)`.
 - `WARNING: N messages could not be read` — those were **not** searched. Run `doctor`.
 - `WARNING: stopped at --limit N` — more matches may exist. Do not describe the result as complete.
-- `unread and flagged cannot be evaluated without Apple Mail's index` — unindexed messages were
-  excluded from that specific filter.
+- `--unread/--flagged cannot be evaluated: their .emlx files carry no flags trailer` — a few
+  unindexed messages were excluded from that specific filter.
 
 If the user asks "find every email about X", do not pass `--limit`, and do not pass
 `--indexed-only`.
@@ -84,9 +84,22 @@ grants to newly launched processes.
 
 ## Freshness
 
-The local store only updates while Mail.app is running. `doctor` warns when the index has not been
-touched in over 24 hours. If the user is looking for a message that just arrived and it isn't there,
-check that Mail is open and has synced — `mailgrep` cannot trigger a sync.
+Apple Mail does not fetch mail while it is closed. `doctor` reports whether Mail.app is running and
+how long ago it last wrote to the store. macOS exposes no last-sync timestamp, so that write time is a
+**lower bound** on freshness — never tell the user their mail is up to date on the strength of it.
+
+If the user is looking for a message that just arrived and it isn't there, check `doctor` for
+`Mail.app running: NO`. That is the likely answer. `mailgrep` cannot trigger a sync; the user must
+open Mail.
+
+Message ids are `ROWID`s and Apple Mail reassigns them when it rebuilds its index. Use them within a
+task; never store them or quote them back to the user in a later session as stable references.
+
+## Exchange accounts return nothing, not stale data
+
+EWS/Exchange accounts do not store messages locally at all. If a user insists mail exists that
+`mailgrep` cannot find, check the account type before assuming a bug — for Exchange there is nothing
+on disk to read.
 
 ## Privacy
 

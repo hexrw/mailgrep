@@ -12,7 +12,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from fixtures import EXTERNAL_ATTACHMENT_CONTENT, create_synthetic_mail_root
+from fixtures import (
+    DEFAULT_METADATA_PLIST_TEMPLATE,
+    EXTERNAL_ATTACHMENT_CONTENT,
+    create_synthetic_mail_root,
+)
 from mailgrep.cli import main
 from mailgrep.locator import CACHE_DIRECTORY_ENVIRONMENT_VARIABLE
 
@@ -205,12 +209,31 @@ class UnindexedCoverageTests(CommandLineCase):
         self.assertNotIn("(unindexed)", output)
         self.assertIn("--indexed-only was set", output)
 
-    def test_unread_filter_reports_skipped_unindexed_messages(self):
+    def test_read_state_comes_from_the_emlx_flags_trailer(self):
         self.write_orphan()
+        _, payload = self.run_json_command("search", "--unread")
+        self.assertEqual(payload["skipped_unindexed_count"], 0)
+        self.assertNotIn(7777, [match["message_id"] for match in payload["matches"]])
+
+    def test_unread_orphan_is_found_when_flags_say_unread(self):
+        from fixtures import build_emlx_bytes
+
+        unread_plist = DEFAULT_METADATA_PLIST_TEMPLATE.format(flags=8623488)
+        messages_directory = self.message_path(1001).parent
+        (messages_directory / "7779.emlx").write_bytes(build_emlx_bytes(ORPHAN_MESSAGE, unread_plist))
+        _, payload = self.run_json_command("search", "--unread")
+        self.assertIn(7779, [match["message_id"] for match in payload["matches"]])
+
+    def test_orphan_without_flags_trailer_is_counted_not_silently_dropped(self):
+        message_bytes = ORPHAN_MESSAGE.encode("utf-8")
+        messages_directory = self.message_path(1001).parent
+        (messages_directory / "7780.emlx").write_bytes(
+            f"{len(message_bytes)}\n".encode("ascii") + message_bytes
+        )
         _, payload = self.run_json_command("search", "--unread")
         self.assertEqual(payload["skipped_unindexed_count"], 1)
         _, output = self.run_command("search", "--unread")
-        self.assertIn("cannot be evaluated without Apple Mail's index", output)
+        self.assertIn("cannot be evaluated", output)
 
     def test_unparsable_orphan_is_reported_not_silently_dropped(self):
         messages_directory = self.message_path(1001).parent
