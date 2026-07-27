@@ -117,8 +117,13 @@ writes the real bytes to a sibling `Attachments/<id>/<part>/<filename>` director
 
 A parser that only reads the inline body gets an empty payload for the `external` and
 `not_downloaded` cases. If it does not check, it writes a **0-byte file and reports success**.
-`mailgrep` refuses to write empty output and tells you which state applies. This is regression-tested
-against synthetic `.partial.emlx` fixtures.
+`mailgrep` refuses to write empty output and tells you which state applies.
+
+This is not a hypothetical. On a 700-message sample of `.partial.emlx` files from one real mailbox,
+174 attachments resolved to external bytes and **128 were `not_downloaded`** — so roughly 42% of
+attachments would have been silently written as empty files. The `X-Apple-Content-Length` placeholder
+header has no documentation anywhere on the open web, yet appears in 836 files on that same machine.
+Regression-tested against synthetic `.partial.emlx` fixtures.
 
 ## Coverage, and why `doctor` can say INCOMPLETE
 
