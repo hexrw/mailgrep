@@ -100,8 +100,14 @@ class SearchTests(CommandLineCase):
         exit_code, payload = self.run_json_command("search")
         self.assertEqual(exit_code, 0)
         self.assertEqual(payload["match_count"], 5)
-        self.assertEqual(payload["examined_count"], 5)
+        self.assertEqual(payload["indexed_match_count"], 5)
+        self.assertEqual(payload["indexed_total"], 5)
+        self.assertEqual(payload["unindexed_scanned"], 0)
         self.assertFalse(payload["truncated_by_limit"])
+
+    def test_footer_separates_indexed_from_disk_counts(self):
+        _, output = self.run_command("search")
+        self.assertIn("5 matches: 5 from Apple Mail's index of 5, 0 read directly from disk", output)
 
     def test_filters_by_sender(self):
         _, payload = self.run_json_command("search", "--from", "alec@example.com")
@@ -115,7 +121,15 @@ class SearchTests(CommandLineCase):
     def test_body_search_reads_message_files(self):
         _, payload = self.run_json_command("search", "--body", "rollout timeline")
         self.assertEqual([match["message_id"] for match in payload["matches"]], [1001])
-        self.assertEqual(payload["examined_count"], 5)
+        self.assertEqual(payload["bodies_read"], 5)
+
+    def test_body_search_reports_how_many_bodies_it_decoded(self):
+        _, output = self.run_command("search", "--body", "rollout timeline")
+        self.assertIn("5 message bodies decoded and searched", output)
+
+    def test_metadata_search_decodes_no_bodies(self):
+        _, payload = self.run_json_command("search", "--from", "alec@example.com")
+        self.assertEqual(payload["bodies_read"], 0)
 
     def test_body_search_matches_html_only_messages(self):
         _, payload = self.run_json_command("search", "--body", "Second paragraph")
@@ -142,10 +156,10 @@ class SearchTests(CommandLineCase):
         self.assertEqual(payload["unreadable_count"], 1)
         self.assertEqual(payload["unreadable_sample"], [1001])
 
-    def test_no_matches_still_reports_examined_count(self):
+    def test_no_matches_still_reports_the_index_size_searched(self):
         _, payload = self.run_json_command("search", "--subject", "nothing matches this")
         self.assertEqual(payload["match_count"], 0)
-        self.assertEqual(payload["examined_count"], 0)
+        self.assertEqual(payload["indexed_total"], 5)
 
 
 ORPHAN_MESSAGE = """From: Draft Author <drafts@example.com>

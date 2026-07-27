@@ -159,7 +159,7 @@ def run_search(arguments: argparse.Namespace) -> int:
     mail_store = open_mail_store(resolve_mail_root(arguments))
     message_filter = build_filter(arguments)
     matches: list[MessageRecord] = []
-    scanned = 0
+    bodies_read = 0
     unreadable: list[int] = []
     truncated = False
     body_needle = arguments.body.casefold() if arguments.body else None
@@ -168,9 +168,10 @@ def run_search(arguments: argparse.Namespace) -> int:
     with open_envelope_index(mail_store.envelope_index_path) as connection:
         schema = introspect_schema(connection)
         indexed_ids = all_message_ids(connection)
+        indexed_total = len(indexed_ids)
         for record in query_messages(connection, schema, message_filter):
-            scanned += 1
             if body_needle is not None:
+                bodies_read += 1
                 path = locator.path_for(record.message_id)
                 if path is None or not path.exists():
                     unreadable.append(record.message_id)
@@ -190,9 +191,10 @@ def run_search(arguments: argparse.Namespace) -> int:
                 break
 
     unindexed_result = None
+    unindexed_scanned = 0
     if not arguments.indexed_only and not truncated:
         unindexed_result = scan_unindexed_messages(locator, indexed_ids, message_filter, body_needle)
-        scanned += unindexed_result.scanned_count
+        unindexed_scanned = unindexed_result.scanned_count
         unreadable.extend(unindexed_result.unreadable_ids)
         for record in unindexed_result.records:
             matches.append(record)
@@ -201,12 +203,16 @@ def run_search(arguments: argparse.Namespace) -> int:
                 break
 
     disk_match_count = sum(1 for record in matches if record.source == "disk")
+    indexed_match_count = len(matches) - disk_match_count
     summary_lines = [format_record(record) for record in matches]
-    footer = [f"-- {len(matches)} matches, {scanned} messages examined"]
-    if disk_match_count:
-        footer.append(
-            f"-- {disk_match_count} of those are not in Apple Mail's index and were read directly from disk"
-        )
+    footer = [
+        f"-- {len(matches)} matches: {indexed_match_count} from Apple Mail's index "
+        f"of {indexed_total}, {disk_match_count} read directly from disk"
+    ]
+    if body_needle is not None:
+        footer.append(f"-- {bodies_read} message bodies decoded and searched")
+    if unindexed_scanned:
+        footer.append(f"-- {unindexed_scanned} messages absent from the index were scanned from disk")
     if unreadable:
         footer.append(
             f"-- WARNING: {len(unreadable)} messages could not be read and were not searched "
@@ -225,7 +231,10 @@ def run_search(arguments: argparse.Namespace) -> int:
     payload = {
         "matches": [record.as_dict() for record in matches],
         "match_count": len(matches),
-        "examined_count": scanned,
+        "indexed_match_count": indexed_match_count,
+        "indexed_total": indexed_total,
+        "bodies_read": bodies_read,
+        "unindexed_scanned": unindexed_scanned,
         "unindexed_match_count": disk_match_count,
         "unreadable_count": len(unreadable),
         "unreadable_sample": unreadable[:10],
