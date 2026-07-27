@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mailgrep"
+version = "0.1.0"
+description = "Read-only search and extraction for the local Apple Mail store on macOS."
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.9"
+dependencies = []
+authors = [{ name = "hexrw" }]
+keywords = ["apple-mail", "macos", "emlx", "email", "search", "read-only"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: MacOS :: MacOS X",
+    "Programming Language :: Python :: 3",
+    "Topic :: Communications :: Email",
+]
+
+[project.urls]
+Homepage = "https://github.com/hexrw/mailgrep"
+Issues = "https://github.com/hexrw/mailgrep/issues"
+
+[project.scripts]
+mailgrep = "mailgrep.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

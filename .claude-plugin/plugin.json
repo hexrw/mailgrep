@@ -1,0 +1,13 @@
+{
+  "name": "mailgrep",
+  "description": "Read-only search and extraction for the local Apple Mail store on macOS.",
+  "version": "0.1.0",
+  "author": {
+    "name": "hexrw",
+    "url": "https://github.com/hexrw"
+  },
+  "homepage": "https://github.com/hexrw/mailgrep",
+  "repository": "https://github.com/hexrw/mailgrep",
+  "license": "MIT",
+  "keywords": ["apple-mail", "macos", "email", "search", "read-only"]
+}

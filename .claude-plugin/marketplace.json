@@ -1,0 +1,24 @@
+{
+  "name": "mailgrep",
+  "owner": {
+    "name": "hexrw",
+    "url": "https://github.com/hexrw"
+  },
+  "metadata": {
+    "description": "Read-only Apple Mail access for Claude Code.",
+    "version": "0.1.0"
+  },
+  "plugins": [
+    {
+      "name": "mailgrep",
+      "source": "./",
+      "description": "Search, read and extract attachments from the local Apple Mail store on macOS. Read-only by construction: no send, delete, move or flag.",
+      "version": "0.1.0",
+      "author": { "name": "hexrw" },
+      "homepage": "https://github.com/hexrw/mailgrep",
+      "license": "MIT",
+      "keywords": ["apple-mail", "macos", "email", "search", "read-only"],
+      "strict": false
+    }
+  ]
+}
