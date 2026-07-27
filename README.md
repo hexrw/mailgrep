@@ -27,6 +27,20 @@ Or run it straight from the checkout with no install at all:
 PYTHONPATH=src python3 -m mailgrep doctor
 ```
 
+Homebrew and other managed Python installs refuse `pip install` under PEP 668
+(*externally-managed-environment*). Rather than passing `--break-system-packages`, drop a shim
+somewhere on your `PATH` — `mailgrep` has no dependencies, so this is all it takes:
+
+```sh
+cat > ~/.local/bin/mailgrep <<'SH'
+#!/bin/sh
+PYTHONPATH="$HOME/path/to/mailgrep/src" exec /usr/bin/python3 -m mailgrep "$@"
+SH
+chmod +x ~/.local/bin/mailgrep
+```
+
+`/usr/bin/python3` is macOS's own interpreter, so the shim keeps working across Homebrew upgrades.
+
 ## Grant Full Disk Access
 
 `~/Library/Mail` is protected by macOS privacy controls (TCC). Nothing works until you grant Full
